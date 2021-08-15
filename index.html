@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
+  <title>Street View</title>
+
+  <!-- Bootstrap -->
+  <link href="css/bootstrap.min.css" rel="stylesheet">
+  <link href="css/cs4620.css" rel="stylesheet">
+  <link href="css/jquery-ui.min.css" rel="stylesheet">
+  <link href="css/jquery-ui.theme.min.css" rel="stylesheet">
+  <link href="css/jquery-ui.structure.min.css" rel="stylesheet">
+
+  <!-- HTML5 shim and Respond.js for IE8 support of HTML5 elements and media queries -->
+  <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+  <!--[if lt IE 9]>
+  <script src="https://oss.maxcdn.com/html5shiv/3.7.3/html5shiv.min.js"></script>
+  <script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div class="container">
+  <h1>WebGL Demo <span class="subtitle">Street View</span></h1>
+
+  <div align="center">
+    <canvas id="webglCanvas" style="border: none; background-color: black;" width="700" height="700"></canvas>
+  </div>
+</div>
+
+<!-- External libraries -->
+<script src="js/jquery-3.1.1.min.js"></script>
+<script src="js/exif.js"></script>
+<script src="js/jquery-ui.min.js"></script>
+<script src="js/gl-matrix-min.js"></script>
+<script src="js/preloadjs.min.js"></script>
+
+<!-- My libraries -->
+<script src="js/webgl-util.js"></script>
+
+<script id="vertexShader" type="x-shader/x-vertex">
+    attribute vec3 vert_position;
+    attribute vec2 vert_texCoord;
+
+    varying vec2 geom_texCoord;
+
+    void main() {
+        gl_Position = vec4(vert_position, 1.0);
+        geom_texCoord = vert_texCoord;
+    }
+</script>
+
+<script id="fragmentShader" type="x-shader/x-fragment">
+    precision highp float;
+
+    const float PI = 3.14159265359;
+
+    varying vec2 geom_texCoord;
+
+    uniform vec3 cameraX;
+    uniform vec3 cameraY;
+    uniform vec3 cameraZ;
+    uniform float cameraS;
+
+    uniform sampler2D photo;
+
+    void main() {
+        vec3 rayDir = normalize(
+          -cameraZ
+          + ((cameraS * geom_texCoord.x) * cameraX)
+          + ((cameraS * geom_texCoord.y) * cameraY));
+
+        // theta is atan(x/z)
+        // rho is acos(y/hyp)
+
+        float theta = atan(rayDir.x, rayDir.z);
+        if (theta < 0.0) { theta = theta + 2.0 * PI; }
+        float rho = acos(rayDir.y / length(rayDir));
+
+        gl_FragColor = texture2D(photo, vec2(theta / (2.0 * PI), rho / PI));
+    }
+</script>
+
+<script>
+  "use strict"
+
+  // Create a LoadQueue object.
+  const imageQueue = new createjs.LoadQueue();
+
+  function initWebGL() {
+    // Register the callback function to run when all images have loaded.
+    imageQueue.on("complete", function() {
+      getImageMetadata(imageQueue, runWebGL);
+    }, this);
+    // List the files you want to load, with their corresponding ID.
+    imageQueue.loadManifest([
+      {
+        id: "arts-quad",
+        src: "img/arts-quad.jpeg"
+      },
+      {
+        id: "big-red-barn",
+        src: "img/big-red-barn.jpeg"
+      },
+      {
+        id: "chevron",
+        src: "img/chevron.png"
+      },
+      {
+        id: "east-avenue",
+        src: "img/east-avenue.jpeg"
+      },
+      {
+        id: "gates-hall",
+        src: "img/gates-hall.jpeg"
+      },
+      {
+        id: "hoy-field",
+        src: "img/hoy-field.jpeg"
+      },
+      {
+        id: "mcgraw-tower",
+        src: "img/mcgraw-tower.jpeg"
+      },
+      {
+        id: "mudd-hall",
+        src: "img/mudd-hall.jpeg"
+      },
+      {
+        id: "statler-hall",
+        src: "img/statler-hall.jpeg"
+      },
+      {
+        id: "teagle-hall",
+        src: "img/teagle-hall.jpeg"
+      },
+      {
+        id: "upson-hall",
+        src: "img/upson-hall.jpeg"
+      },
+      {
+        id: "uris-hall",
+        src: "img/uris-hall.jpeg"
+      }
+    ]);
+  }
+
+  function runWebGL(metadata) {
+    const canvasQuery = $("#webglCanvas");
+    const canvas = canvasQuery[0];
+    const gl = initializeWebGL(canvas);
+    const program = createGlslProgram(gl, "vertexShader", "fragmentShader");
+
+    // Variables for camera movement
+    // TODO support camera movement
+    let target = vec3.fromValues(0, 0, -1);
+    let up = vec3.fromValues(0, 1, 0);
+    let mouseDown = false;
+
+    canvasQuery.mousedown(function (event) {
+      console.log("mouse entered!");
+    });
+
+    // TODO support zooming (allow dynamic fov)
+    let fov = 50.0;
+
+    // Create a fullscreen quad to display our viewport
+    const viewportData = {
+      vertices: [
+        -1.0, -1.0, 0.0,  // Lower left, vert_position
+        -1.0,  -1.0,        // vert_texCoord
+        1.0, -1.0, 0.0,  // Lower right
+        1.0,  -1.0,
+        1.0,  1.0, 0.0,  // Top right
+        1.0,  1.0,
+        -1.0,  1.0, 0.0,  // Top left
+        -1.0,  1.0
+      ],
+      indices: [
+        0, 1, 2,
+        0, 2, 3
+      ]
+    }
+    const viewportShape = createShape(gl, viewportData);
+
+    function updateWebGL(timestamp) {
+      const camera = calculateCamera(target, up, fov);
+
+      gl.useProgram(program);
+
+      gl.uniform3fv(gl.getUniformLocation(program, "cameraX"), camera.x);
+      gl.uniform3fv(gl.getUniformLocation(program, "cameraY"), camera.y);
+      gl.uniform3fv(gl.getUniformLocation(program, "cameraZ"), camera.z);
+      gl.uniform1f(gl.getUniformLocation(program, "cameraS"), camera.s);
+
+      // TODO add multiple scenes
+      const testTexture = createTexture(gl, imageQueue.getResult("arts-quad", false), false);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, testTexture);
+      gl.uniform1i(gl.getUniformLocation(program, "photo"), 0);
+
+      gl.useProgram(null);
+
+      drawShape(gl, program, viewportShape);
+
+      window.requestAnimationFrame(updateWebGL);
+    }
+
+    window.requestAnimationFrame(updateWebGL);
+  }
+
+  function calculateCamera(target, up, fov) {
+    const z = vec3.create();
+    vec3.negate(z, target);
+    vec3.normalize(z, z);
+
+    const x = vec3.create();
+    vec3.cross(x, up, z);
+    vec3.normalize(x, x);
+
+    const y = vec3.create();
+    vec3.cross(y, z, x);
+    vec3.normalize(y, y);
+
+    const s = Math.tan((fov / 2.0) * (Math.PI / 180.0));
+
+    return {
+      x: x,
+      y: y,
+      z: z,
+      s: s
+    };
+  }
+
+  initWebGL();
+</script>
+
+</body>
+</html>

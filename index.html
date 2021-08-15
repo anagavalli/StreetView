@@ -26,6 +26,7 @@
   <h1>WebGL Demo <span class="subtitle">Street View</span></h1>
 
   <div align="center">
+    <!-- TODO allow resizing of canvas/viewport -->
     <canvas id="webglCanvas" style="border: none; background-color: black;" width="700" height="700"></canvas>
   </div>
 </div>
@@ -69,8 +70,8 @@
     void main() {
         vec3 rayDir = normalize(
           -cameraZ
-          + ((cameraS * geom_texCoord.x) * cameraX)
-          + ((cameraS * geom_texCoord.y) * cameraY));
+          - ((cameraS * geom_texCoord.x) * cameraX)
+          - ((cameraS * geom_texCoord.y) * cameraY));
 
         // theta is atan(x/z)
         // rho is acos(y/hyp)
@@ -88,6 +89,8 @@
 
   // Create a LoadQueue object.
   const imageQueue = new createjs.LoadQueue();
+  const startingTarget = vec3.fromValues(0, 0, -1);
+  const startingUp = vec3.fromValues(0, 1, 0);
 
   function initWebGL() {
     // Register the callback function to run when all images have loaded.
@@ -154,17 +157,46 @@
     const program = createGlslProgram(gl, "vertexShader", "fragmentShader");
 
     // Variables for camera movement
-    // TODO support camera movement
-    let target = vec3.fromValues(0, 0, -1);
-    let up = vec3.fromValues(0, 1, 0);
-    let mouseDown = false;
-
-    canvasQuery.mousedown(function (event) {
-      console.log("mouse entered!");
-    });
-
-    // TODO support zooming (allow dynamic fov)
+    let horizRot = 0;
+    let vertRot = 0;
+    let lastMousePos = {};
     let fov = 50.0;
+
+    // Camera movement callbacks
+    canvasQuery.mousedown(function (event) {
+      const clientRect = canvas.getBoundingClientRect();
+      lastMousePos = {
+        x: event.clientX - clientRect.left,
+        y: event.clientY - clientRect.top
+      };
+
+      canvasQuery.on("mousemove", function(event) {
+        const clientRect = canvas.getBoundingClientRect();
+        const curMousePos = {
+          x: event.clientX - clientRect.left,
+          y: event.clientY - clientRect.top
+        };
+
+        // Negate so that camera moves in opposite direction of mouse move
+        const deltaHoriz = -1 * pixelsToRads(curMousePos.x - lastMousePos.x);
+        const deltaVert = -1 * pixelsToRads(curMousePos.y - lastMousePos.y);
+
+        horizRot = mod(horizRot + deltaHoriz, 2 * Math.PI);
+        vertRot = clamp(vertRot + deltaVert, Math.PI / -2, Math.PI / 2);
+
+        lastMousePos = curMousePos;
+      });
+    });
+    canvasQuery.mouseup(function (event) {
+      canvasQuery.off("mousemove");
+    });
+    canvasQuery.on('wheel', function(event){
+      event.preventDefault();
+      if(event.originalEvent.deltaY !== 0){
+        fov += event.originalEvent.deltaY / 30;
+        fov = clamp(fov, 10.0, 80.0);
+      }
+    });
 
     // Create a fullscreen quad to display our viewport
     const viewportData = {
@@ -186,7 +218,7 @@
     const viewportShape = createShape(gl, viewportData);
 
     function updateWebGL(timestamp) {
-      const camera = calculateCamera(target, up, fov);
+      const camera = calculateCamera(horizRot, vertRot, fov);
 
       gl.useProgram(program);
 
@@ -196,7 +228,7 @@
       gl.uniform1f(gl.getUniformLocation(program, "cameraS"), camera.s);
 
       // TODO add multiple scenes
-      const testTexture = createTexture(gl, imageQueue.getResult("arts-quad", false), false);
+      const testTexture = createTexture(gl, imageQueue.getResult("arts-quad", false), true);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, testTexture);
@@ -212,7 +244,22 @@
     window.requestAnimationFrame(updateWebGL);
   }
 
-  function calculateCamera(target, up, fov) {
+  // Calculates the orthonormal basis for the camera view given a horizRot and vertRot from
+  // starting position, as well as per-pixel "s" value for perspective calculation, given fov.
+  // Starting camera position is at origin looking along the negative z axis.
+  function calculateCamera(horizRot, vertRot, fov) {
+    const target = vec3.clone(startingTarget);
+    vec3.rotateX(target, target, origin, vertRot);
+    vec3.normalize(target, target);
+    vec3.rotateY(target, target, origin, horizRot);
+    vec3.normalize(target, target);
+
+    const up = vec3.clone(startingUp);
+    vec3.rotateX(up, up, origin, vertRot);
+    vec3.normalize(up, up);
+    vec3.rotateY(up, up, origin, horizRot);
+    vec3.normalize(up, up);
+
     const z = vec3.create();
     vec3.negate(z, target);
     vec3.normalize(z, z);
@@ -233,6 +280,12 @@
       z: z,
       s: s
     };
+  }
+
+  // Converts from pixels of mouse movement to radians of rotation.
+  // Arbitrarily picked as 10 pixels = 1 degree for a good feel.
+  function pixelsToRads(pixels) {
+    return pixels * Math.PI / 1800;
   }
 
   initWebGL();

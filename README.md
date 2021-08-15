@@ -3,10 +3,9 @@ WebGL based clone of Google Street View, with limited functionality. Images are 
 
 Run "python -m SimpleHTTPServer" from the home directory then navigate to localhost:[portnum] to view the app.
 
-Currently only supports viewing a single default scene, with default camera view.
+Currently only supports viewing a single default scene.
 
 Incoming features:
-- Move and zoom camera
 - Navigate to additional scenes
 - Resize the viewport
 

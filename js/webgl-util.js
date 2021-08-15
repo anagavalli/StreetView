@@ -1,3 +1,9 @@
+const origin = vec3.fromValues(0, 0, 0);
+
+const mod = (a, n) => ((a % n ) + n ) % n;
+
+const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
+
 function initializeWebGL(canvas) {
   // Getting WebGL context the right way
   let gl = null;

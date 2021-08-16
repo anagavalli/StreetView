@@ -21,13 +21,13 @@
   <script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
   <![endif]-->
 </head>
-<body>
+<body onresize="resizeCanvas()">
 <div class="container">
   <h1>WebGL Demo <span class="subtitle">Street View</span></h1>
 
   <div align="center">
-    <!-- TODO allow resizing of canvas/viewport -->
-    <canvas id="webglCanvas" style="border: none; background-color: black;" width="700" height="700"></canvas>
+    <!-- Canvas size is based on window size, values here are placeholder until render. -->
+    <canvas id="webglCanvas" style="border: none; background-color: black;" width="100" height="100"></canvas>
   </div>
 </div>
 
@@ -63,15 +63,16 @@
     uniform vec3 cameraX;
     uniform vec3 cameraY;
     uniform vec3 cameraZ;
-    uniform float cameraS;
+    uniform float cameraSHoriz;
+    uniform float cameraSVert;
 
     uniform sampler2D photo;
 
     void main() {
         vec3 rayDir = normalize(
           -cameraZ
-          - ((cameraS * geom_texCoord.x) * cameraX)
-          - ((cameraS * geom_texCoord.y) * cameraY));
+          - ((cameraSHoriz * geom_texCoord.x) * cameraX)
+          - ((cameraSVert * geom_texCoord.y) * cameraY));
 
         // theta is atan(x/z)
         // rho is acos(y/hyp)
@@ -87,6 +88,8 @@
 <script>
   "use strict"
 
+  // Set initial canvas size based on window size
+  resizeCanvas();
   // Create a LoadQueue object.
   const imageQueue = new createjs.LoadQueue();
   const startingTarget = vec3.fromValues(0, 0, -1);
@@ -218,14 +221,22 @@
     const viewportShape = createShape(gl, viewportData);
 
     function updateWebGL(timestamp) {
-      const camera = calculateCamera(horizRot, vertRot, fov);
+      // Adjust WebGL canvas if canvas element has been resized
+      resizeCanvasToDisplaySize(gl.canvas);
+      gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+      const clientRect = canvas.getBoundingClientRect();
+      const fovHoriz = fov;
+      const fovVert = fov * clientRect.height / clientRect.width;
+      const camera = calculateCamera(horizRot, vertRot, fovHoriz, fovVert);
 
       gl.useProgram(program);
 
       gl.uniform3fv(gl.getUniformLocation(program, "cameraX"), camera.x);
       gl.uniform3fv(gl.getUniformLocation(program, "cameraY"), camera.y);
       gl.uniform3fv(gl.getUniformLocation(program, "cameraZ"), camera.z);
-      gl.uniform1f(gl.getUniformLocation(program, "cameraS"), camera.s);
+      gl.uniform1f(gl.getUniformLocation(program, "cameraSHoriz"), camera.sHoriz);
+      gl.uniform1f(gl.getUniformLocation(program, "cameraSVert"), camera.sVert)
 
       // TODO add multiple scenes
       const testTexture = createTexture(gl, imageQueue.getResult("arts-quad", false), true);
@@ -247,7 +258,7 @@
   // Calculates the orthonormal basis for the camera view given a horizRot and vertRot from
   // starting position, as well as per-pixel "s" value for perspective calculation, given fov.
   // Starting camera position is at origin looking along the negative z axis.
-  function calculateCamera(horizRot, vertRot, fov) {
+  function calculateCamera(horizRot, vertRot, fovHoriz, fovVert) {
     const target = vec3.clone(startingTarget);
     vec3.rotateX(target, target, origin, vertRot);
     vec3.normalize(target, target);
@@ -272,13 +283,15 @@
     vec3.cross(y, z, x);
     vec3.normalize(y, y);
 
-    const s = Math.tan((fov / 2.0) * (Math.PI / 180.0));
+    const sHoriz = Math.tan((fovHoriz / 2.0) * (Math.PI / 180.0));
+    const sVert = Math.tan((fovVert / 2.0) * (Math.PI / 180.0));
 
     return {
       x: x,
       y: y,
       z: z,
-      s: s
+      sHoriz: sHoriz,
+      sVert: sVert
     };
   }
 
@@ -286,6 +299,30 @@
   // Arbitrarily picked as 10 pixels = 1 degree for a good feel.
   function pixelsToRads(pixels) {
     return pixels * Math.PI / 1800;
+  }
+
+  function resizeCanvas() {
+    const canvas = document.getElementById("webglCanvas");
+    canvas.width = window.innerWidth / 1.5;
+    canvas.height = window.innerHeight / 1.5;
+  }
+
+  function resizeCanvasToDisplaySize(canvas) {
+    // Lookup the size the browser is displaying the canvas in CSS pixels.
+    const displayWidth  = canvas.clientWidth;
+    const displayHeight = canvas.clientHeight;
+
+    // Check if the canvas is not the same size.
+    const needResize = canvas.width  !== displayWidth ||
+      canvas.height !== displayHeight;
+
+    if (needResize) {
+      // Make the canvas the same size
+      canvas.width  = displayWidth;
+      canvas.height = displayHeight;
+    }
+
+    return needResize;
   }
 
   initWebGL();

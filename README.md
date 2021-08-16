@@ -7,6 +7,5 @@ Currently only supports viewing a single default scene.
 
 Incoming features:
 - Navigate to additional scenes
-- Resize the viewport
 
 Note that adding user provided scenes is NOT a planned feature.

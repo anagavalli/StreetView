@@ -37,6 +37,7 @@
 <script src="js/jquery-ui.min.js"></script>
 <script src="js/gl-matrix.js"></script>
 <script src="js/preloadjs.min.js"></script>
+<script src="js/math.js"></script>
 
 <!-- My libraries -->
 <script src="js/webgl-util.js"></script>
@@ -194,42 +195,7 @@
     let vertRot = 0;
     let lastMousePos = {};
     let fov = startingFov;
-
-    // Camera movement callbacks
-    canvasQuery.mousedown(function (event) {
-      const clientRect = canvas.getBoundingClientRect();
-      lastMousePos = {
-        x: event.clientX - clientRect.left,
-        y: event.clientY - clientRect.top
-      };
-
-      canvasQuery.on("mousemove", function(event) {
-        const clientRect = canvas.getBoundingClientRect();
-        const curMousePos = {
-          x: event.clientX - clientRect.left,
-          y: event.clientY - clientRect.top
-        };
-
-        // Negate so that camera moves in opposite direction of mouse move
-        const deltaHoriz = -1 * pixelsToRads(curMousePos.x - lastMousePos.x);
-        const deltaVert = -1 * pixelsToRads(curMousePos.y - lastMousePos.y);
-
-        horizRot = mod(horizRot + deltaHoriz, 2 * Math.PI);
-        vertRot = clamp(vertRot + deltaVert, Math.PI / -2, Math.PI / 2);
-
-        lastMousePos = curMousePos;
-      });
-    });
-    canvasQuery.mouseup(function (event) {
-      canvasQuery.off("mousemove");
-    });
-    canvasQuery.on('wheel', function(event){
-      event.preventDefault();
-      if(event.originalEvent.deltaY !== 0){
-        fov += event.originalEvent.deltaY / 30;
-        fov = clamp(fov, 10.0, 80.0);
-      }
-    });
+    let neighbors = [];
 
     // Create a fullscreen quad to display our viewport
     const viewportData = {
@@ -268,10 +234,108 @@
     }
     const chevronShape = createShape(gl, chevronData);
 
+    const numImages = metadata.length - 1;
+    const gFrom = [], gTo = [], gWeight = [], gBearing = [];
+
+    for (let i = 0; i < metadata.length; i++) {
+      const data = metadata[i];
+      if (data.poseHeadingDegrees === undefined) { continue; }
+
+      for (let j = i + 1; j < metadata.length; j++) {
+        const otherData = metadata[j];
+        if (otherData.poseHeadingDegrees === undefined) { continue; }
+
+        gFrom.push(data.id);
+        gTo.push(otherData.id);
+
+        const startPos = {
+          y: degToDecimal(data.latitude),
+          x: degToDecimal(data.longitude)
+        }
+        const endPos = {
+          y: degToDecimal(otherData.latitude),
+          x: degToDecimal(otherData.longitude)
+        }
+
+        gWeight.push(distance(startPos, endPos));
+        gBearing.push(findBearing(startPos, endPos));
+      }
+    }
+
+    const mst = kruskal(numImages, math.combinations(numImages, 2), gFrom, gTo, gWeight, gBearing);
+    let sceneImage;
+
+    function setNewScene(newImage) {
+      canvasQuery.off('mousedown');
+      canvasQuery.off('mouseup');
+      canvasQuery.off('wheel');
+
+      horizRot = 0;
+      vertRot = 0;
+      lastMousePos = {};
+      sceneImage = newImage;
+
+      // Camera movement callbacks
+      canvasQuery.on('mousedown', function (event) {
+        const clientRect = canvas.getBoundingClientRect();
+        lastMousePos = {
+          x: event.clientX - clientRect.left,
+          y: event.clientY - clientRect.top
+        };
+
+        canvasQuery.on('mousemove', function(event) {
+          const clientRect = canvas.getBoundingClientRect();
+          const curMousePos = {
+            x: event.clientX - clientRect.left,
+            y: event.clientY - clientRect.top
+          };
+
+          // Negate so that camera moves in opposite direction of mouse move
+          const deltaHoriz = -1 * pixelsToRads(curMousePos.x - lastMousePos.x);
+          const deltaVert = -1 * pixelsToRads(curMousePos.y - lastMousePos.y);
+
+          horizRot = mod(horizRot + deltaHoriz, 2 * Math.PI);
+          vertRot = clamp(vertRot + deltaVert, Math.PI / -2, Math.PI / 2);
+
+          lastMousePos = curMousePos;
+        });
+      });
+      canvasQuery.on('mouseup', function (event) {
+        canvasQuery.off('mousemove');
+      });
+      canvasQuery.on('wheel', function(event){
+        event.preventDefault();
+        if(event.originalEvent.deltaY !== 0){
+          fov += event.originalEvent.deltaY / 30;
+          fov = clamp(fov, 10.0, 80.0);
+        }
+      });
+
+      neighbors = [];
+      mst.forEach(edge => {
+        if (edge.v1 === sceneImage) {
+          neighbors.push({
+            scene: edge.v2,
+            direction: edge.bearing
+          })
+        }
+        else if (edge.v2 === sceneImage) {
+          neighbors.push({
+            scene: edge.v1,
+            direction: 360 - edge.bearing
+          })
+        }
+      });
+    }
+
+    setNewScene(mst[0].v1);
+
     function updateWebGL(timestamp) {
       // Adjust WebGL canvas if canvas element has been resized
       resizeCanvasToDisplaySize(gl.canvas);
       gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+      const curMetadata = getCurrentMetadata(metadata, sceneImage);
 
       const clientRect = canvas.getBoundingClientRect();
       const aspectRatio = clientRect.width / clientRect.height;
@@ -292,50 +356,79 @@
       gl.uniform1f(gl.getUniformLocation(program, "cameraSHoriz"), camera.sHoriz);
       gl.uniform1f(gl.getUniformLocation(program, "cameraSVert"), camera.sVert)
 
-      // TODO add multiple scenes
-      const testTexture = createTexture(gl, imageQueue.getResult("arts-quad", false), true);
+      const sceneTexture = createTexture(gl, imageQueue.getResult(sceneImage, false), true);
 
       gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, testTexture);
+      gl.bindTexture(gl.TEXTURE_2D, sceneTexture);
       gl.uniform1i(gl.getUniformLocation(program, "photo"), 1);
 
       gl.useProgram(null);
 
       drawShape(gl, program, viewportShape);
 
-      // Chevron (for scene movement)
-      // Model matrix
-      const chevronRotation = 0;
-      const scale = mat4.fromScaling(mat4.create(), vec3.fromValues(0.07, 0.07, 0.07));
-      const translation = mat4.fromTranslation(mat4.create(), vec3.fromValues(0, 0, -2));
-      const rotation = mat4.fromRotation(mat4.create(), chevronRotation, y_axis);
+      canvasQuery.off('click');
+      neighbors.forEach(neighbor => {
+        // Chevron (for scene movement)
+        // Model matrix
+        const chevronRotation = (neighbor.direction - curMetadata.poseHeadingDegrees) * Math.PI / 180;
+        const scale = mat4.fromScaling(mat4.create(), vec3.fromValues(0.07, 0.07, 0.07));
+        const translation = mat4.fromTranslation(mat4.create(), vec3.fromValues(0, 0, -2));
+        const rotation = mat4.fromRotation(mat4.create(), chevronRotation, y_axis);
 
-      const model = mat4.multiply(mat4.create(), translation, scale);
-      mat4.multiply(model, rotation, model);
+        const model = mat4.multiply(mat4.create(), translation, scale);
+        mat4.multiply(model, rotation, model);
 
-      // View matrix
-      const view = mat4.clone(camera.lookAt);
+        // View matrix
+        const view = mat4.clone(camera.lookAt);
 
-      // Projection matrix
-      const projection = mat4.create();
-      mat4.perspective(projection, startingFov, aspectRatio, 1, 1000);
+        // Projection matrix
+        const projection = mat4.create();
+        mat4.perspective(projection, startingFov, aspectRatio, 1, 1000);
 
-      const toWorld = mat4.create();
-      mat4.multiply(toWorld, view, model);
-      mat4.multiply(toWorld, projection, toWorld);
+        const toWorld = mat4.create();
+        mat4.multiply(toWorld, view, model);
+        mat4.multiply(toWorld, projection, toWorld);
 
-      gl.useProgram(chevronProgram);
-      gl.uniformMatrix4fv(gl.getUniformLocation(chevronProgram, "toWorld"), false, toWorld);
+        canvasQuery.on('click', function(event) {
+          const clientRect = canvas.getBoundingClientRect();
+          const curMousePos = {
+            x: event.clientX - clientRect.left,
+            y: event.clientY - clientRect.top
+          };
 
-      const chevronTexture = createTexture(gl, imageQueue.getResult("chevron", false), false);
+          const clipMin = vec4.transformMat4(vec4.create(), vec4.fromValues(-1, -1, 0, 1), toWorld);
+          vec4.scale(clipMin, clipMin, 1 / clipMin[3]);
+          const clipMax = vec4.transformMat4(vec4.create(), vec4.fromValues(1, 1, 0, 1), toWorld);
+          vec4.scale(clipMax, clipMax, 1 / clipMax[3]);
 
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, chevronTexture);
-      gl.uniform1i(gl.getUniformLocation(chevronProgram, "chevron"), 0);
+          const min = {
+            x: (clipMax[0] + 1) / 2 * clientRect.width,
+            y: clientRect.height - (clipMin[1] + 1) / 2 * clientRect.height
+          }
 
-      gl.useProgram(null);
+          const max = {
+            x: (clipMin[0] + 1) / 2 * clientRect.width,
+            y: clientRect.height - (clipMax[1] + 1) / 2 * clientRect.height
+          }
 
-      drawShape(gl, chevronProgram, chevronShape);
+          if (boundsContain(curMousePos, min, max)) {
+            setNewScene(neighbor.scene);
+          }
+        });
+
+        gl.useProgram(chevronProgram);
+        gl.uniformMatrix4fv(gl.getUniformLocation(chevronProgram, "toWorld"), false, toWorld);
+
+        const chevronTexture = createTexture(gl, imageQueue.getResult("chevron", false), false);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, chevronTexture);
+        gl.uniform1i(gl.getUniformLocation(chevronProgram, "chevron"), 0);
+
+        gl.useProgram(null);
+
+        drawShape(gl, chevronProgram, chevronShape);
+      });
 
       window.requestAnimationFrame(updateWebGL);
     }
@@ -400,6 +493,18 @@
     }
 
     return needResize;
+  }
+
+  function getCurrentMetadata(metadata, curSceneId) {
+    let curMetadata;
+
+    metadata.forEach(data => {
+      if (data.id === curSceneId) {
+        curMetadata = data;
+      }
+    });
+
+    return curMetadata;
   }
 
   initWebGL();

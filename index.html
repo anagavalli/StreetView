@@ -35,7 +35,7 @@
 <script src="js/jquery-3.1.1.min.js"></script>
 <script src="js/exif.js"></script>
 <script src="js/jquery-ui.min.js"></script>
-<script src="js/gl-matrix-min.js"></script>
+<script src="js/gl-matrix.js"></script>
 <script src="js/preloadjs.min.js"></script>
 
 <!-- My libraries -->
@@ -85,6 +85,34 @@
     }
 </script>
 
+<script id="chevronVertexShader" type="x-shader/x-vertex">
+    attribute vec3 vert_position;
+    attribute vec2 vert_texCoord;
+
+    uniform mat4 toWorld;
+
+    varying vec2 geom_texCoord;
+
+    void main() {
+        gl_Position = toWorld * vec4(vert_position, 1.0);
+        geom_texCoord = vert_texCoord;
+    }
+</script>
+
+<script id="chevronFragmentShader" type="x-shader/x-fragment">
+    precision highp float;
+
+    varying vec2 geom_texCoord;
+
+    uniform sampler2D chevron;
+
+    void main() {
+        vec4 texColor = texture2D(chevron, geom_texCoord);
+        if (texColor.a < 0.1) { discard; }
+        gl_FragColor = vec4(texColor.xyz, 0.75);
+    }
+</script>
+
 <script>
   "use strict"
 
@@ -94,6 +122,7 @@
   const imageQueue = new createjs.LoadQueue();
   const startingTarget = vec3.fromValues(0, 0, -1);
   const startingUp = vec3.fromValues(0, 1, 0);
+  const startingFov = 50.0;
 
   function initWebGL() {
     // Register the callback function to run when all images have loaded.
@@ -158,12 +187,13 @@
     const canvas = canvasQuery[0];
     const gl = initializeWebGL(canvas);
     const program = createGlslProgram(gl, "vertexShader", "fragmentShader");
+    const chevronProgram = createGlslProgram(gl, "chevronVertexShader", "chevronFragmentShader");
 
     // Variables for camera movement
     let horizRot = 0;
     let vertRot = 0;
     let lastMousePos = {};
-    let fov = 50.0;
+    let fov = startingFov;
 
     // Camera movement callbacks
     canvasQuery.mousedown(function (event) {
@@ -220,34 +250,92 @@
     }
     const viewportShape = createShape(gl, viewportData);
 
+    const chevronData = {
+      vertices: [
+        -1.0, -1.0, 0.0,  // Lower left, vert_position
+        0.0,  1.0,        // vert_texCoord
+        1.0, -1.0, 0.0,  // Lower right
+        1.0,  1.0,
+        1.0,  1.0, 0.0,  // Top right
+        1.0,  0.0,
+        -1.0,  1.0, 0.0,  // Top left
+        0.0,  0.0
+      ],
+      indices: [
+        0, 1, 2,
+        0, 2, 3
+      ]
+    }
+    const chevronShape = createShape(gl, chevronData);
+
     function updateWebGL(timestamp) {
       // Adjust WebGL canvas if canvas element has been resized
       resizeCanvasToDisplaySize(gl.canvas);
       gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
       const clientRect = canvas.getBoundingClientRect();
+      const aspectRatio = clientRect.width / clientRect.height;
       const fovHoriz = fov;
-      const fovVert = fov * clientRect.height / clientRect.width;
+      const fovVert = fov / aspectRatio;
       const camera = calculateCamera(horizRot, vertRot, fovHoriz, fovVert);
+
+      const lookAt = camera.lookAt;
+      const x = vec3.fromValues(lookAt[0], lookAt[4], lookAt[8]);
+      const y = vec3.fromValues(lookAt[1], lookAt[5], lookAt[9]);
+      const z = vec3.fromValues(lookAt[2], lookAt[6], lookAt[10]);
 
       gl.useProgram(program);
 
-      gl.uniform3fv(gl.getUniformLocation(program, "cameraX"), camera.x);
-      gl.uniform3fv(gl.getUniformLocation(program, "cameraY"), camera.y);
-      gl.uniform3fv(gl.getUniformLocation(program, "cameraZ"), camera.z);
+      gl.uniform3fv(gl.getUniformLocation(program, "cameraX"), x);
+      gl.uniform3fv(gl.getUniformLocation(program, "cameraY"), y);
+      gl.uniform3fv(gl.getUniformLocation(program, "cameraZ"), z);
       gl.uniform1f(gl.getUniformLocation(program, "cameraSHoriz"), camera.sHoriz);
       gl.uniform1f(gl.getUniformLocation(program, "cameraSVert"), camera.sVert)
 
       // TODO add multiple scenes
       const testTexture = createTexture(gl, imageQueue.getResult("arts-quad", false), true);
 
-      gl.activeTexture(gl.TEXTURE0);
+      gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, testTexture);
-      gl.uniform1i(gl.getUniformLocation(program, "photo"), 0);
+      gl.uniform1i(gl.getUniformLocation(program, "photo"), 1);
 
       gl.useProgram(null);
 
       drawShape(gl, program, viewportShape);
+
+      // Chevron (for scene movement)
+      // Model matrix
+      const chevronRotation = 0;
+      const scale = mat4.fromScaling(mat4.create(), vec3.fromValues(0.07, 0.07, 0.07));
+      const translation = mat4.fromTranslation(mat4.create(), vec3.fromValues(0, 0, -2));
+      const rotation = mat4.fromRotation(mat4.create(), chevronRotation, y_axis);
+
+      const model = mat4.multiply(mat4.create(), translation, scale);
+      mat4.multiply(model, rotation, model);
+
+      // View matrix
+      const view = mat4.clone(camera.lookAt);
+
+      // Projection matrix
+      const projection = mat4.create();
+      mat4.perspective(projection, startingFov, aspectRatio, 1, 1000);
+
+      const toWorld = mat4.create();
+      mat4.multiply(toWorld, view, model);
+      mat4.multiply(toWorld, projection, toWorld);
+
+      gl.useProgram(chevronProgram);
+      gl.uniformMatrix4fv(gl.getUniformLocation(chevronProgram, "toWorld"), false, toWorld);
+
+      const chevronTexture = createTexture(gl, imageQueue.getResult("chevron", false), false);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, chevronTexture);
+      gl.uniform1i(gl.getUniformLocation(chevronProgram, "chevron"), 0);
+
+      gl.useProgram(null);
+
+      drawShape(gl, chevronProgram, chevronShape);
 
       window.requestAnimationFrame(updateWebGL);
     }
@@ -271,27 +359,16 @@
     vec3.rotateY(up, up, origin, horizRot);
     vec3.normalize(up, up);
 
-    const z = vec3.create();
-    vec3.negate(z, target);
-    vec3.normalize(z, z);
-
-    const x = vec3.create();
-    vec3.cross(x, up, z);
-    vec3.normalize(x, x);
-
-    const y = vec3.create();
-    vec3.cross(y, z, x);
-    vec3.normalize(y, y);
+    const lookAt = mat4.create();
+    mat4.lookAt(lookAt, origin, target, up);
 
     const sHoriz = Math.tan((fovHoriz / 2.0) * (Math.PI / 180.0));
     const sVert = Math.tan((fovVert / 2.0) * (Math.PI / 180.0));
 
     return {
-      x: x,
-      y: y,
-      z: z,
       sHoriz: sHoriz,
-      sVert: sVert
+      sVert: sVert,
+      lookAt: lookAt
     };
   }
 

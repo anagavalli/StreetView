@@ -1,4 +1,5 @@
 const origin = vec3.fromValues(0, 0, 0);
+const y_axis = vec3.fromValues(0, 1, 0);
 
 const mod = (a, n) => ((a % n ) + n ) % n;
 
@@ -16,6 +17,8 @@ function initializeWebGL(canvas) {
     alert("Could not get WebGL2 context!");
     throw new Error("Could not get WebGL2 context!");
   }
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   return gl;
 }
 
